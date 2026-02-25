@@ -1,51 +1,39 @@
-# Swap Dat Face – Retention Log
+# Swap Dat Face - Retention Log
 
-Swap Dat Face is a small face swap service built for creative use. We try to minimise the data we handle and keep anything we do process short lived.
+Swap Dat Face is a face swap service built for creative use. We minimize retained data and keep default retention short.
 
-This repository contains the code for the **public retention log endpoint** used by  
-https://swapdatface.com
+This repository contains the code for the public retention log endpoint used by [swapdatface.com](https://swapdatface.com).
 
-The endpoint publishes a signed, machine readable snapshot of how data retention and cleanup behave in production. It exists to provide transparency into how the system operates, not to make absolute guarantees.
-
----
-
-## TL;DR
-
-This repository publishes a simple, observable log of data retention behaviour.
-
-- Uploaded images and results are temporary
-- Cleanup runs automatically and frequently
-- Retention behaviour is visible via a public endpoint
-- The payload is signed to prevent silent modification
-- No user content or identifiers are included
-
-This is intended to show how the system behaves in practice, not to claim perfect privacy.
+The endpoint publishes a signed, machine-readable snapshot of retention behavior in production. It is a transparency tool, not a cryptographic proof of every deletion event.
 
 ---
 
 ## Live links
 
-**Live retention log:**  
-https://swapdatface.com/api/retention
-
-**Source code:**  
-https://github.com/swapdatface/retention-log
+- Live retention log: [https://swapdatface.com/api/retention](https://swapdatface.com/api/retention)
+- Source code: [https://github.com/swapdatface/retention-log](https://github.com/swapdatface/retention-log)
 
 ---
 
-## What this endpoint is
+## What this endpoint reports
 
-The retention log endpoint returns a JSON document describing:
+The payload reports policy + latest evidence for the public retention scope:
 
-- The configured retention window
-- The cleanup interval
-- The most recent cleanup run
-- Aggregate counts of scanned and deleted objects
-- Sampled evidence used to validate the retention window
-- Server time
-- A cryptographic signature over the payload
+- non-video media in short-retention scope
+- video media on 30-minute retention
 
-The report is purely operational. It does not contain user content.
+The payload intentionally excludes 30-day video retention objects from public evidence totals.
+
+The response includes:
+
+- policy settings
+- latest cleanup run window
+- aggregate scanned/deleted/error totals for public scope
+- sampled oldest remaining age in public scope
+- server time
+- HMAC signature over canonical JSON
+
+No user content, object keys, or identifiers are returned.
 
 ---
 
@@ -55,14 +43,16 @@ The report is purely operational. It does not contain user content.
 {
   "schema_version": 1,
   "policy": {
-    "max_retention_minutes": 30,
+    "default_video_retention_minutes": 30,
+    "extended_video_retention_days": 30,
+    "non_video_or_orphan_retention_minutes": 30,
     "cleanup_interval_minutes": 14,
-    "description": "..."
+    "description": "Retention evidence is calculated from non-video media plus video media on the 30-minute window. 30-day video retention objects are intentionally excluded from these public evidence totals."
   },
   "latest_run": {
-    "run_id": "2026-01-21T21:05:46.115Z",
-    "started_at": "2026-01-21T21:05:46.115Z",
-    "finished_at": "2026-01-21T21:05:46.148Z",
+    "run_id": "aggregate:2026-02-25T22:27:39.297Z:2026-02-25T22:27:39.029Z",
+    "started_at": "2026-02-25T22:27:39.029Z",
+    "finished_at": "2026-02-25T22:27:39.349Z",
     "status": "success",
     "scanned_objects": 0,
     "deleted_objects": 0,
@@ -70,90 +60,63 @@ The report is purely operational. It does not contain user content.
   },
   "evidence": {
     "oldest_remaining_object_age_seconds": null,
-    "notes": "Oldest remaining object age is sampled during cleanup to validate retention window."
+    "notes": "Oldest remaining object age is sampled from non-video media and 30-minute-retention video media only."
   },
-  "server_time": "2026-01-21T21:47:13.372Z",
+  "server_time": "2026-02-25T22:29:19.863Z",
   "signing": {
     "alg": "HMAC-SHA256",
     "key_id": "retention-v1",
-    "payload_sha256": "…",
-    "signature": "…"
+    "payload_sha256": "...",
+    "signature": "..."
   }
 }
 ```
 
-## Why this exists
-
-Most online services include a privacy policy that says data is deleted after a certain period of time.
-
-This endpoint exists to make that behaviour visible.
-
-By publishing a retention log, we aim to show:
-- what the retention configuration is
-- when cleanup last ran
-- whether cleanup is succeeding
-
-The report does **not** include:
-- images or generated results
-- filenames or object keys
-- URLs or access tokens
-- user identifiers, fingerprints, or analytics IDs
-
-This is a transparency measure, not a claim of perfect privacy.
-
 ---
 
-## A note on trust and limitations
+## Why counts can be zero
 
-Like all online services, this system ultimately requires trust in the operator.
+It is valid for `scanned_objects`, `deleted_objects`, and `oldest_remaining_object_age_seconds` to be zero/null when there are no objects left in the public scope.
 
-Without specialised confidential computing infrastructure, it is not possible to mathematically prove that a server never stores data under all possible conditions.
-
-Rather than making absolute claims, we focus on:
-- minimising what data is handled
-- keeping retention windows short
-- automating deletion
-- publishing observable, operational information about how the system behaves
-
-This information is provided to help users make an informed decision, not to eliminate trust entirely.
+Long-retention (30-day) video objects may still exist internally and are intentionally excluded from these public totals.
 
 ---
 
 ## Signing model
 
-The retention log is signed using HMAC SHA-256 over a canonical JSON representation of the payload.
+The endpoint signs canonical JSON using HMAC SHA-256.
 
-- Canonicalisation is performed by stable key sorting prior to hashing
-- `payload_sha256` is the SHA-256 hash of the canonical payload
-- `signature` is an HMAC SHA-256 signature of the same payload
-- `key_id` exists to support future key rotation
+- canonicalization is stable key sorting
+- `payload_sha256` is SHA-256 of canonical payload
+- `signature` is HMAC SHA-256 of canonical payload
+- `key_id` supports future key rotation
 
-If any field in the payload changes, the signature will no longer match.
+If any payload field changes, signature verification fails.
 
 ---
 
-## What this log can and cannot show
+## Trust + limitations
 
-This log can show:
-- the configured retention window
-- that cleanup runs are executing
-- that retention behaviour is being monitored
+This log is an operational transparency measure.
 
-This log cannot show:
-- deletion of a specific image belonging to a specific person
-- behaviour of a user’s device or browser
-- anything outside the scope of the published payload
+It can show:
+
+- configured retention policy values
+- cleanup activity and recency
+- whether scoped retention evidence looks healthy
+
+It cannot prove deletion of one specific user object under every failure scenario.
 
 ---
 
 ## Operational notes
 
-- Cleanup runs approximately every 14 minutes
-- Objects older than the internal deletion threshold are removed
-- The published 30 minute retention window includes buffer for scheduling delays or transient failures
+- cleanup cadence is approximately every 14 minutes
+- public evidence scope is short-retention only
+- retention policy includes buffer for scheduler drift and transient failures
 
 ---
 
 ## License
 
-MIT License. See the LICENSE file for details.
+MIT License. See [LICENSE](./LICENSE).
