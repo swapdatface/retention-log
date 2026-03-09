@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createHmac, createHash } from "crypto";
 import redis from "@/lib/redis";
+import { signRetentionPayload } from "./retention-signing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,13 +24,6 @@ interface StoredReport {
 
 type StoredReportWithExtras = StoredReport & Record<string, unknown>;
 const hasOwn = Object.prototype.hasOwnProperty;
-
-function stableStringify(value: unknown): string {
-    if (value === null || typeof value !== "object") return JSON.stringify(value);
-    if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`).join(",")}}`;
-}
 
 function isStoredReport(value: unknown): value is StoredReport {
     if (!value || typeof value !== "object") return false;
@@ -97,17 +90,6 @@ function combineStatus(statuses: StoredReport["status"][]): StoredReport["status
 function parseIsoMs(value: string): number | null {
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
-}
-
-function signPayload(payload: object): { payload_sha256: string; signature: string } {
-    const secret = process.env.RETENTION_SIGNING_SECRET;
-    if (!secret) throw new Error("Missing RETENTION_SIGNING_SECRET environment variable");
-
-    const canonicalJson = stableStringify(payload);
-    const payloadHash = createHash("sha256").update(canonicalJson).digest("hex");
-    const signature = createHmac("sha256", secret).update(canonicalJson).digest("hex");
-
-    return { payload_sha256: payloadHash, signature };
 }
 
 export async function GET() {
@@ -231,17 +213,12 @@ export async function GET() {
             server_time: serverTime,
         };
 
-        const { payload_sha256, signature } = signPayload(unsignedPayload);
+        const signing = signRetentionPayload(unsignedPayload);
 
         return NextResponse.json(
             {
                 ...unsignedPayload,
-                signing: {
-                    alg: "HMAC-SHA256",
-                    key_id: "retention-v1",
-                    payload_sha256,
-                    signature,
-                },
+                signing,
             },
             {
                 headers: {
